@@ -1,5 +1,13 @@
 {
   "version": "7",
   "dialect": "postgresql",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788774645578,
+      "tag": "0000_create_chat_schema",
+      "breakpoints": true
+    }
+  ]
 }
