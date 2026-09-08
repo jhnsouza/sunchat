@@ -14,6 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
+      contacts: {
+        Row: {
+          contact_id: string
+          created_at: string
+          id: string
+          owner_id: string
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string
+          id?: string
+          owner_id: string
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string
+          id?: string
+          owner_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contacts_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contacts_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       messages: {
         Row: {
           attachment_name: string | null
@@ -21,7 +57,10 @@ export type Database = {
           attachment_url: string | null
           content: string | null
           created_at: string
+          ephemeral: boolean
+          expires_at: string | null
           id: string
+          read_at: string | null
           recipient_id: string
           sender_id: string
         }
@@ -31,7 +70,10 @@ export type Database = {
           attachment_url?: string | null
           content?: string | null
           created_at?: string
+          ephemeral?: boolean
+          expires_at?: string | null
           id?: string
+          read_at?: string | null
           recipient_id: string
           sender_id: string
         }
@@ -41,7 +83,10 @@ export type Database = {
           attachment_url?: string | null
           content?: string | null
           created_at?: string
+          ephemeral?: boolean
+          expires_at?: string | null
           id?: string
+          read_at?: string | null
           recipient_id?: string
           sender_id?: string
         }
@@ -67,27 +112,36 @@ export type Database = {
           avatar_url: string | null
           created_at: string
           display_name: string
+          ephemeral_enabled: boolean
           id: string
           last_seen: string
           phone: string | null
+          sound_enabled: boolean
+          sun_pin: string | null
           username: string
         }
         Insert: {
           avatar_url?: string | null
           created_at?: string
           display_name?: string
+          ephemeral_enabled?: boolean
           id: string
           last_seen?: string
           phone?: string | null
+          sound_enabled?: boolean
+          sun_pin?: string | null
           username: string
         }
         Update: {
           avatar_url?: string | null
           created_at?: string
           display_name?: string
+          ephemeral_enabled?: boolean
           id?: string
           last_seen?: string
           phone?: string | null
+          sound_enabled?: boolean
+          sun_pin?: string | null
           username?: string
         }
         Relationships: []
