@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-import { signedUrl, isOnline, type Profile } from "@/lib/session";
+import { signedUrl, useSession, type Profile } from "@/lib/session";
 
 type Props = {
-  profile: Pick<Profile, "display_name" | "username" | "avatar_url" | "last_seen"> | null;
+  profile: Pick<Profile, "id" | "display_name" | "username" | "avatar_url"> | null;
   size?: number;
   showStatus?: boolean;
   className?: string;
 };
 
 export function Avatar({ profile, size = 44, showStatus = false, className = "" }: Props) {
+  const { onlineIds } = useSession();
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -22,6 +23,7 @@ export function Avatar({ profile, size = 44, showStatus = false, className = "" 
   }, [profile?.avatar_url]);
 
   const label = (profile?.display_name || profile?.username || "?").trim().charAt(0).toUpperCase();
+  const online = !!profile?.id && onlineIds.has(profile.id);
 
   return (
     <span
@@ -38,9 +40,9 @@ export function Avatar({ profile, size = 44, showStatus = false, className = "" 
           label
         )}
       </span>
-      {showStatus && isOnline(profile?.last_seen) ? (
+      {showStatus ? (
         <span
-          className="absolute bottom-0 right-0 rounded-full border-2 border-card bg-online"
+          className={`absolute bottom-0 right-0 rounded-full border-2 border-card ${online ? "bg-online" : "bg-muted-foreground/50"}`}
           style={{ width: size * 0.27, height: size * 0.27 }}
         />
       ) : null}
