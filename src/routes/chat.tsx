@@ -1,18 +1,27 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Camera, File as FileIcon, ImageIcon, ArrowUp, Plus, Timer } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Avatar } from "@/components/Avatar";
-import { isOnline, normalizePhone, normalizeUsername, signedUrl, useSession, type Profile } from "@/lib/session";
+import {
+  PROFILE_COLUMNS,
+  normalizePhone,
+  normalizeUsername,
+  playPing,
+  signedUrl,
+  useSession,
+  type Profile,
+} from "@/lib/session";
 
 export const Route = createFileRoute("/chat")({
   head: () => ({
     meta: [
-      { title: "Conversas · Borá" },
+      { title: "Conversas · SunChat" },
       {
         name: "description",
-        content: "Converse em tempo real, envie imagens e arquivos e encontre pessoas por @ ou telefone.",
+        content: "Converse em tempo real, envie imagens e arquivos e adicione pessoas por @ ou telefone.",
       },
-      { property: "og:title", content: "Conversas · Borá" },
+      { property: "og:title", content: "Conversas · SunChat" },
       { property: "og:description", content: "Mensagens instantâneas, leves e bonitas." },
     ],
   }),
@@ -28,22 +37,34 @@ type Message = {
   attachment_name: string | null;
   attachment_type: string | null;
   created_at: string;
+  read_at: string | null;
+  ephemeral: boolean;
 };
+
+const EPHEMERAL_MS = 10_000;
 
 function ChatPage() {
   const navigate = useNavigate();
-  const { session, profile, loading } = useSession();
+  const { session, profile, loading, onlineIds } = useSession();
   const me = session?.user?.id;
 
   const [contacts, setContacts] = useState<Profile[]>([]);
+  const [unread, setUnread] = useState<Record<string, number>>({});
   const [active, setActive] = useState<Profile | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Profile[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [addQuery, setAddQuery] = useState("");
+  const [addResults, setAddResults] = useState<Profile[]>([]);
+  const [addNote, setAddNote] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<Profile | null>(null);
+  activeRef.current = active;
 
   useEffect(() => {
     if (!loading && !session) void navigate({ to: "/auth", replace: true });
@@ -51,31 +72,64 @@ function ChatPage() {
 
   const loadContacts = useCallback(async () => {
     if (!me) return;
-    const { data } = await supabase
-      .from("messages")
-      .select("sender_id, recipient_id, created_at")
-      .order("created_at", { ascending: false })
-      .limit(300);
-    const ids: string[] = [];
-    for (const row of data ?? []) {
-      const other = row.sender_id === me ? row.recipient_id : row.sender_id;
-      if (other !== me && !ids.includes(other)) ids.push(other);
-    }
+    const { data: rows } = await supabase.from("contacts").select("contact_id").eq("owner_id", me);
+    const ids = (rows ?? []).map((r) => r.contact_id as string);
     if (ids.length === 0) {
       setContacts([]);
       return;
     }
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, username, phone, display_name, avatar_url, last_seen")
-      .in("id", ids);
-    const byId = new Map((profiles ?? []).map((p) => [p.id, p as Profile]));
-    setContacts(ids.map((id) => byId.get(id)).filter(Boolean) as Profile[]);
+    const { data: profiles } = await supabase.from("profiles").select(PROFILE_COLUMNS).in("id", ids);
+    setContacts((profiles ?? []) as Profile[]);
+  }, [me]);
+
+  const loadUnread = useCallback(async () => {
+    if (!me) return;
+    const { data } = await supabase
+      .from("messages")
+      .select("sender_id")
+      .eq("recipient_id", me)
+      .is("read_at", null);
+    const counts: Record<string, number> = {};
+    for (const row of data ?? []) {
+      const from = row.sender_id as string;
+      counts[from] = (counts[from] ?? 0) + 1;
+    }
+    setUnread(counts);
   }, [me]);
 
   useEffect(() => {
     void loadContacts();
-  }, [loadContacts]);
+    void loadUnread();
+  }, [loadContacts, loadUnread]);
+
+  const scheduleBurn = useCallback((id: string) => {
+    window.setTimeout(() => {
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+    }, EPHEMERAL_MS);
+  }, []);
+
+  const markRead = useCallback(
+    async (rows: Message[]) => {
+      if (!me) return;
+      const pending = rows.filter((m) => m.recipient_id === me && !m.read_at);
+      if (pending.length === 0) return;
+      const stamp = new Date().toISOString();
+      await supabase
+        .from("messages")
+        .update({ read_at: stamp })
+        .in("id", pending.map((m) => m.id));
+      setMessages((prev) => prev.map((m) => (pending.some((p) => p.id === m.id) ? { ...m, read_at: stamp } : m)));
+      void loadUnread();
+      for (const m of pending) {
+        if (!m.ephemeral) continue;
+        scheduleBurn(m.id);
+        window.setTimeout(() => {
+          void supabase.from("messages").delete().eq("id", m.id);
+        }, EPHEMERAL_MS);
+      }
+    },
+    [me, loadUnread, scheduleBurn],
+  );
 
   const loadMessages = useCallback(
     async (partnerId: string) => {
@@ -88,9 +142,11 @@ function ChatPage() {
         )
         .order("created_at", { ascending: true })
         .limit(500);
-      setMessages((data ?? []) as Message[]);
+      const rows = (data ?? []) as Message[];
+      setMessages(rows);
+      void markRead(rows);
     },
-    [me],
+    [me, markRead],
   );
 
   useEffect(() => {
@@ -98,7 +154,7 @@ function ChatPage() {
     else setMessages([]);
   }, [active, loadMessages]);
 
-  // Realtime: new messages and presence updates.
+  // Realtime: incoming messages, read receipts and profile updates.
   useEffect(() => {
     if (!me) return;
     const channel = supabase
@@ -106,11 +162,21 @@ function ChatPage() {
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
         const msg = payload.new as Message;
         if (msg.sender_id !== me && msg.recipient_id !== me) return;
-        const partner = msg.sender_id === me ? msg.recipient_id : msg.sender_id;
-        if (active && partner === active.id) {
-          setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+        const current = activeRef.current;
+        if (msg.sender_id !== me) {
+          if (profile?.sound_enabled !== false) playPing();
+          void loadUnread();
         }
-        void loadContacts();
+        if (current && (msg.sender_id === current.id || msg.recipient_id === current.id)) {
+          setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+          if (msg.recipient_id === me) void markRead([msg]);
+        }
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages" }, (payload) => {
+        const msg = payload.new as Message;
+        if (msg.sender_id !== me && msg.recipient_id !== me) return;
+        setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m)));
+        if (msg.sender_id === me && msg.ephemeral && msg.read_at) scheduleBurn(msg.id);
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, (payload) => {
         const p = payload.new as Profile;
@@ -121,17 +187,17 @@ function ChatPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [me, active, loadContacts]);
+  }, [me, profile?.sound_enabled, loadUnread, markRead, scheduleBurn]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, active?.id]);
 
-  // Search by @username or phone number.
+  // "Adicionar pessoa": the only place where new people can be discovered.
   useEffect(() => {
-    const raw = query.trim();
+    const raw = addQuery.trim();
     if (raw.length < 2) {
-      setResults([]);
+      setAddResults([]);
       return;
     }
     const timer = window.setTimeout(async () => {
@@ -141,14 +207,27 @@ function ChatPage() {
       if (digits.length >= 3) filters.push(`phone.ilike.%${digits}%`);
       const { data } = await supabase
         .from("profiles")
-        .select("id, username, phone, display_name, avatar_url, last_seen")
+        .select(PROFILE_COLUMNS)
         .or(filters.join(","))
         .neq("id", me ?? "")
         .limit(12);
-      setResults((data ?? []) as Profile[]);
+      setAddResults((data ?? []) as Profile[]);
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [query, me]);
+  }, [addQuery, me]);
+
+  async function addContact(person: Profile) {
+    if (!me) return;
+    const { error } = await supabase.from("contacts").insert({ owner_id: me, contact_id: person.id });
+    if (error && !error.message.includes("duplicate")) {
+      setAddNote("Não foi possível adicionar.");
+      return;
+    }
+    await loadContacts();
+    setAddNote(`${person.display_name || person.username} foi adicionado.`);
+    setAddQuery("");
+    setAddResults([]);
+  }
 
   async function send() {
     const body = text.trim();
@@ -156,11 +235,15 @@ function ChatPage() {
     setText("");
     const { data } = await supabase
       .from("messages")
-      .insert({ sender_id: me, recipient_id: active.id, content: body })
+      .insert({
+        sender_id: me,
+        recipient_id: active.id,
+        content: body,
+        ephemeral: profile?.ephemeral_enabled ?? false,
+      })
       .select("*")
       .single();
     if (data) setMessages((prev) => [...prev, data as Message]);
-    void loadContacts();
   }
 
   async function sendFile(file: File) {
@@ -178,17 +261,25 @@ function ChatPage() {
           attachment_url: path,
           attachment_name: file.name,
           attachment_type: file.type,
+          ephemeral: profile?.ephemeral_enabled ?? false,
         })
         .select("*")
         .single();
       if (data) setMessages((prev) => [...prev, data as Message]);
-      void loadContacts();
     } finally {
       setUploading(false);
     }
   }
 
-  const list = useMemo(() => (query.trim().length >= 2 ? results : contacts), [query, results, contacts]);
+  const term = query.trim().toLowerCase().replace(/^@/, "");
+  const list = term
+    ? contacts.filter(
+        (c) =>
+          c.username.includes(term) ||
+          c.display_name.toLowerCase().includes(term) ||
+          (c.phone ?? "").includes(normalizePhone(term)),
+      )
+    : contacts;
 
   if (loading || !session) {
     return <main className="min-h-[100dvh]" />;
@@ -211,18 +302,20 @@ function ChatPage() {
               <div className="min-w-0">
                 <p className="truncate text-sm font-extrabold">{active.display_name || active.username}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  @{active.username} · {isOnline(active.last_seen) ? "online" : "offline"}
+                  @{active.username} · {onlineIds.has(active.id) ? "online" : "offline"}
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => navigate({ to: "/profile" })}
-              aria-label="Meu perfil"
-              className="shrink-0"
-            >
+            <button onClick={() => navigate({ to: "/profile" })} aria-label="Meu perfil" className="shrink-0">
               <Avatar profile={profile} size={38} />
             </button>
           </header>
+
+          {profile?.ephemeral_enabled ? (
+            <p className="flex items-center justify-center gap-1.5 border-b border-white/50 py-1.5 text-[11px] font-bold text-muted-foreground">
+              <Timer className="h-3.5 w-3.5" /> Mensagens temporárias ativas
+            </p>
+          ) : null}
 
           <div className="no-scrollbar flex-1 space-y-2.5 overflow-y-auto px-4 py-4">
             {messages.map((m) => (
@@ -231,7 +324,61 @@ function ChatPage() {
             <div ref={bottomRef} />
           </div>
 
-          <footer className="flex items-center gap-2 border-t border-white/60 px-3 py-3">
+          <footer className="p-3">
+            <div className="glass-panel-strong rounded-4xl">
+              <input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void send();
+                }}
+                placeholder={`Mensagem para ${active.display_name || active.username}...`}
+                className="w-full bg-transparent px-5 py-4 text-sm outline-none placeholder:text-muted-foreground/70"
+              />
+              <div className="flex items-center justify-between border-t border-white/60 px-4 py-2.5">
+                <div className="flex items-center gap-4 text-muted-foreground">
+                  <button onClick={() => cameraRef.current?.click()} aria-label="Câmera" disabled={uploading}>
+                    <Camera className="h-5 w-5" />
+                  </button>
+                  <button onClick={() => imageRef.current?.click()} aria-label="Foto" disabled={uploading}>
+                    <ImageIcon className="h-5 w-5" />
+                  </button>
+                  <button onClick={() => fileRef.current?.click()} aria-label="Arquivo" disabled={uploading}>
+                    <FileIcon className="h-5 w-5" />
+                  </button>
+                </div>
+                <button
+                  onClick={() => void send()}
+                  aria-label="Enviar"
+                  className="send-pill grid h-10 w-16 place-items-center rounded-full active:scale-95"
+                >
+                  <ArrowUp className="h-5 w-5 text-white" />
+                </button>
+              </div>
+            </div>
+            <input
+              ref={cameraRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void sendFile(file);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={imageRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void sendFile(file);
+                e.target.value = "";
+              }}
+            />
             <input
               ref={fileRef}
               type="file"
@@ -242,30 +389,6 @@ function ChatPage() {
                 e.target.value = "";
               }}
             />
-            <button
-              onClick={() => fileRef.current?.click()}
-              disabled={uploading}
-              aria-label="Enviar imagem ou arquivo"
-              className="glossy grid h-11 w-11 shrink-0 place-items-center rounded-full bg-card text-lg"
-            >
-              {uploading ? "…" : "+"}
-            </button>
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void send();
-              }}
-              placeholder="Mensagem"
-              className="glossy min-w-0 flex-1 rounded-full bg-card px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-            <button
-              onClick={() => void send()}
-              aria-label="Enviar"
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground shadow-[0_8px_20px_oklch(0.58_0.196_258_/_35%)] active:scale-95"
-            >
-              ↑
-            </button>
           </footer>
         </section>
       ) : (
@@ -277,21 +400,66 @@ function ChatPage() {
             </button>
           </header>
 
-          <div className="px-5 pb-3">
+          <div className="flex items-center gap-2 px-5 pb-3">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar @usuário ou telefone"
-              className="glossy w-full rounded-full bg-card px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Buscar nos seus contatos"
+              className="glossy min-w-0 flex-1 rounded-full bg-card px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
+            <button
+              onClick={() => {
+                setAdding((v) => !v);
+                setAddNote(null);
+              }}
+              aria-label="Adicionar pessoas"
+              className="send-pill grid h-11 w-11 shrink-0 place-items-center rounded-full active:scale-95"
+            >
+              <Plus className="h-5 w-5 text-white" />
+            </button>
           </div>
+
+          {adding ? (
+            <div className="glass-panel mx-4 mb-3 rounded-3xl p-3">
+              <p className="px-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Adicionar pessoas
+              </p>
+              <input
+                value={addQuery}
+                onChange={(e) => {
+                  setAddQuery(e.target.value);
+                  setAddNote(null);
+                }}
+                placeholder="@usuário ou telefone"
+                className="glossy mt-2 w-full rounded-full bg-card px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+              {addNote ? <p className="mt-2 px-1 text-xs font-bold text-primary">{addNote}</p> : null}
+              <div className="mt-2 space-y-1.5">
+                {addResults.map((p) => (
+                  <div key={p.id} className="flex items-center gap-3 rounded-2xl bg-card/70 px-3 py-2">
+                    <Avatar profile={p} size={36} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-bold">{p.display_name || p.username}</span>
+                      <span className="block truncate text-xs text-muted-foreground">@{p.username}</span>
+                    </span>
+                    <button
+                      onClick={() => void addContact(p)}
+                      className="rounded-full bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-foreground"
+                    >
+                      Adicionar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="no-scrollbar flex-1 space-y-1.5 overflow-y-auto px-3 pb-4">
             {list.length === 0 ? (
               <p className="px-3 py-10 text-center text-sm text-muted-foreground">
-                {query.trim().length >= 2
-                  ? "Ninguém encontrado."
-                  : "Busque por @usuário ou telefone para começar."}
+                {contacts.length === 0
+                  ? "Toque em + para adicionar pessoas por @ ou telefone."
+                  : "Nenhum contato com esse nome."}
               </p>
             ) : (
               list.map((c) => (
@@ -306,8 +474,15 @@ function ChatPage() {
                   <Avatar profile={c} size={44} showStatus />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-bold">{c.display_name || c.username}</span>
-                    <span className="block truncate text-xs text-muted-foreground">@{c.username}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      @{c.username} · {onlineIds.has(c.id) ? "online" : "offline"}
+                    </span>
                   </span>
+                  {unread[c.id] ? (
+                    <span className="grid h-6 min-w-6 place-items-center rounded-full bg-primary px-1.5 text-xs font-bold text-primary-foreground">
+                      {unread[c.id]}
+                    </span>
+                  ) : null}
                 </button>
               ))
             )}
@@ -359,8 +534,10 @@ function Bubble({ message, mine }: { message: Message; mine: boolean }) {
         {message.content ? (
           <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.content}</p>
         ) : null}
-        <p className={`mt-1 text-[10px] font-semibold ${mine ? "text-white/70" : "text-muted-foreground"}`}>
+        <p className={`mt-1 flex items-center gap-1 text-[10px] font-semibold ${mine ? "opacity-70" : "text-muted-foreground"}`}>
+          {message.ephemeral ? <Timer className="h-3 w-3" /> : null}
           {time}
+          {mine && message.read_at ? " · lida" : ""}
         </p>
       </div>
     </div>

@@ -50,6 +50,15 @@ export function emailForUsername(username: string) {
   return `${username}@${AUTH_EMAIL_DOMAIN}`;
 }
 
+/** Hashes the 4-digit home screen code so the raw value is never stored. */
+export async function hashPin(pin: string): Promise<string> {
+  const bytes = new TextEncoder().encode(`sunchat:${pin}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /** Plays a short chime for incoming messages. */
 export function playPing() {
   try {
