@@ -133,3 +133,23 @@
     display: none;
   }
 }
+
+@utility send-pill {
+  background: linear-gradient(160deg, oklch(0.82 0.1 245) 0%, oklch(0.72 0.14 250) 100%);
+  box-shadow: 0 8px 18px oklch(0.7 0.13 250 / 40%), inset 0 1px 1px oklch(1 0 0 / 60%);
+}
+
+@utility neu-card {
+  background: oklch(0.975 0.004 265);
+  box-shadow:
+    12px 12px 28px oklch(0.4 0.05 265 / 12%),
+    -12px -12px 28px oklch(1 0 0 / 90%);
+}
+
+@utility neu-input {
+  background: oklch(0.968 0.004 265);
+  box-shadow:
+    inset 5px 5px 10px oklch(0.4 0.05 265 / 12%),
+    inset -5px -5px 10px oklch(1 0 0 / 95%);
+}
+
