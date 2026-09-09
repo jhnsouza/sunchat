@@ -64,7 +64,8 @@ function ProfilePage() {
 
   async function toggle(field: "sound_enabled" | "ephemeral_enabled", value: boolean) {
     if (!profile) return;
-    await supabase.from("profiles").update({ [field]: value }).eq("id", profile.id);
+    const patch = field === "sound_enabled" ? { sound_enabled: value } : { ephemeral_enabled: value };
+    await supabase.from("profiles").update(patch).eq("id", profile.id);
     await refreshProfile();
   }
 
