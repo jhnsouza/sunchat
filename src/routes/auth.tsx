@@ -11,12 +11,12 @@ import {
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
-      { title: "Entrar no Borá" },
+      { title: "Entrar no SunChat" },
       {
         name: "description",
-        content: "Entre ou crie sua conta Borá com @usuário ou telefone e senha.",
+        content: "Entre ou crie sua conta SunChat com @usuário ou telefone e senha.",
       },
-      { property: "og:title", content: "Entrar no Borá" },
+      { property: "og:title", content: "Entrar no SunChat" },
       { property: "og:description", content: "Acesse suas conversas com @usuário ou telefone." },
     ],
   }),
@@ -51,6 +51,11 @@ function AuthPage() {
       if (mode === "register") {
         const user = normalizeUsername(username);
         if (user.length < 3) throw new Error("Escolha um @usuário com 3 letras ou mais.");
+        const digits = phone ? normalizePhone(phone) : null;
+        if (digits) {
+          const { data: taken } = await supabase.rpc("username_for_identifier", { _identifier: digits });
+          if (taken) throw new Error("Esse telefone já está em outra conta.");
+        }
         const { data, error: signUpError } = await supabase.auth.signUp({
           email: emailForUsername(user),
           password,
@@ -61,10 +66,16 @@ function AuthPage() {
         const { error: profileError } = await supabase.from("profiles").insert({
           id,
           username: user,
-          phone: phone ? normalizePhone(phone) : null,
+          phone: digits,
           display_name: displayName.trim() || user,
         });
-        if (profileError) throw profileError;
+        if (profileError) {
+          throw new Error(
+            profileError.message.includes("profiles_phone_unique")
+              ? "Esse telefone já está em outra conta."
+              : "Esse @usuário já existe.",
+          );
+        }
       } else {
         const raw = identifier.trim();
         let user = normalizeUsername(raw);
@@ -89,53 +100,44 @@ function AuthPage() {
 
   return (
     <main className="flex min-h-[100dvh] items-center justify-center px-5 py-12">
-      <div className="glass-panel-strong w-full max-w-sm rounded-4xl p-7">
-        <h1 className="text-2xl font-extrabold tracking-tight">
-          {mode === "login" ? "Bem-vindo de volta" : "Criar conta"}
+      <div className="neu-card w-full max-w-sm rounded-[2.5rem] p-8">
+        <img src="/logo.jpg" alt="SunChat" width={56} height={56} className="mx-auto h-14 w-14 rounded-2xl object-cover" />
+        <h1 className="mt-4 text-center text-2xl font-extrabold tracking-tight">
+          {mode === "login" ? "Entrar" : "Criar conta"}
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {mode === "login"
-            ? "Use seu @usuário ou telefone."
-            : "Escolha um @usuário e uma senha."}
+        <p className="mt-1 text-center text-sm text-muted-foreground">
+          {mode === "login" ? "Use seu @usuário ou telefone." : "Escolha um @usuário e uma senha."}
         </p>
 
-        <form onSubmit={submit} className="mt-6 space-y-3">
+        <form onSubmit={submit} className="mt-7 space-y-3.5">
           {mode === "login" ? (
             <Field
-              label="@usuário ou telefone"
               value={identifier}
               onChange={setIdentifier}
-              placeholder="@maria ou 11999998888"
+              placeholder="@usuário ou telefone"
               autoComplete="username"
             />
           ) : (
             <>
-              <Field label="@usuário" value={username} onChange={setUsername} placeholder="@maria" />
-              <Field label="Nome" value={displayName} onChange={setDisplayName} placeholder="Maria Silva" />
-              <Field
-                label="Telefone (opcional)"
-                value={phone}
-                onChange={setPhone}
-                placeholder="11999998888"
-                inputMode="tel"
-              />
+              <Field value={username} onChange={setUsername} placeholder="@usuário" />
+              <Field value={displayName} onChange={setDisplayName} placeholder="Seu nome" />
+              <Field value={phone} onChange={setPhone} placeholder="Telefone (opcional)" inputMode="tel" />
             </>
           )}
           <Field
-            label="Senha"
             value={password}
             onChange={setPassword}
             type="password"
-            placeholder="••••••"
+            placeholder="Senha"
             autoComplete={mode === "login" ? "current-password" : "new-password"}
           />
 
-          {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
+          {error ? <p className="px-1 text-sm font-semibold text-destructive">{error}</p> : null}
 
           <button
             type="submit"
             disabled={busy}
-            className="mt-2 w-full rounded-full bg-primary py-3.5 text-sm font-bold text-primary-foreground shadow-[0_10px_24px_oklch(0.58_0.196_258_/_35%)] transition-transform active:scale-[0.98] disabled:opacity-60"
+            className="mt-3 w-full rounded-full bg-foreground py-4 text-sm font-bold uppercase tracking-[0.14em] text-background shadow-[0_12px_26px_oklch(0.24_0.03_265_/_28%)] transition-transform active:scale-[0.98] disabled:opacity-60"
           >
             {busy ? "Aguarde…" : mode === "login" ? "Entrar" : "Criar conta"}
           </button>
@@ -146,7 +148,7 @@ function AuthPage() {
             setMode(mode === "login" ? "register" : "login");
             setError(null);
           }}
-          className="mt-5 w-full text-center text-sm font-semibold text-primary"
+          className="mt-6 w-full text-center text-sm font-semibold text-muted-foreground"
         >
           {mode === "login" ? "Não tenho conta — criar agora" : "Já tenho conta — entrar"}
         </button>
@@ -156,26 +158,19 @@ function AuthPage() {
 }
 
 function Field({
-  label,
   value,
   onChange,
   ...rest
 }: {
-  label: string;
   value: string;
   onChange: (v: string) => void;
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange">) {
   return (
-    <label className="block">
-      <span className="ml-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-        {label}
-      </span>
-      <input
-        {...rest}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="glossy mt-1.5 w-full rounded-full bg-card px-5 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-ring"
-      />
-    </label>
+    <input
+      {...rest}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="neu-input w-full rounded-full px-6 py-4 text-sm text-foreground outline-none placeholder:text-muted-foreground/70 focus:ring-2 focus:ring-ring"
+    />
   );
 }

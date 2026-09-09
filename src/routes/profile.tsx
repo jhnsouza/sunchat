@@ -2,15 +2,15 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Avatar } from "@/components/Avatar";
-import { normalizePhone, useSession } from "@/lib/session";
+import { hashPin, normalizePhone, useSession } from "@/lib/session";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
     meta: [
-      { title: "Meu perfil · Borá" },
-      { name: "description", content: "Ajuste seu nome, foto e telefone, ou saia da conta." },
-      { property: "og:title", content: "Meu perfil · Borá" },
-      { property: "og:description", content: "Informações básicas da sua conta Borá." },
+      { title: "Meu perfil · SunChat" },
+      { name: "description", content: "Ajuste nome, foto, telefone, som, mensagens temporárias e a senha do sol." },
+      { property: "og:title", content: "Meu perfil · SunChat" },
+      { property: "og:description", content: "Preferências da sua conta SunChat." },
     ],
   }),
   component: ProfilePage,
@@ -23,6 +23,9 @@ function ProfilePage() {
   const [phone, setPhone] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pin, setPin] = useState("");
+  const [pinNote, setPinNote] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -39,22 +42,59 @@ function ProfilePage() {
   async function save() {
     if (!profile) return;
     setBusy(true);
-    await supabase
+    setError(null);
+    const digits = phone ? normalizePhone(phone) : null;
+    const { error: updateError } = await supabase
       .from("profiles")
-      .update({ display_name: displayName.trim() || profile.username, phone: phone ? normalizePhone(phone) : null })
+      .update({ display_name: displayName.trim() || profile.username, phone: digits })
       .eq("id", profile.id);
-    await refreshProfile();
     setBusy(false);
+    if (updateError) {
+      setError(
+        updateError.message.includes("profiles_phone_unique")
+          ? "Esse telefone já está em outra conta."
+          : "Não foi possível salvar.",
+      );
+      return;
+    }
+    await refreshProfile();
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
+  }
+
+  async function toggle(field: "sound_enabled" | "ephemeral_enabled", value: boolean) {
+    if (!profile) return;
+    const patch = field === "sound_enabled" ? { sound_enabled: value } : { ephemeral_enabled: value };
+    await supabase.from("profiles").update(patch).eq("id", profile.id);
+    await refreshProfile();
+  }
+
+  async function savePin() {
+    if (!profile) return;
+    if (pin.length !== 4) {
+      setPinNote("Use 4 números.");
+      return;
+    }
+    const hash = await hashPin(pin);
+    await supabase.from("profiles").update({ sun_pin: hash }).eq("id", profile.id);
+    await refreshProfile();
+    setPin("");
+    setPinNote("Senha do sol ativada.");
+  }
+
+  async function clearPin() {
+    if (!profile) return;
+    await supabase.from("profiles").update({ sun_pin: null }).eq("id", profile.id);
+    await refreshProfile();
+    setPinNote("Senha do sol removida.");
   }
 
   async function uploadAvatar(file: File) {
     if (!profile) return;
     setBusy(true);
     const path = `${profile.id}/avatar-${Date.now()}`;
-    const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
-    if (!error) {
+    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
+    if (!upErr) {
       await supabase.from("profiles").update({ avatar_url: path }).eq("id", profile.id);
       await refreshProfile();
     }
@@ -99,7 +139,7 @@ function ProfilePage() {
             <input
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="glossy mt-1.5 w-full rounded-full bg-card px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+              className="neu-input mt-1.5 w-full rounded-full px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
           </label>
           <label className="block">
@@ -108,9 +148,51 @@ function ProfilePage() {
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               inputMode="tel"
-              className="glossy mt-1.5 w-full rounded-full bg-card px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+              className="neu-input mt-1.5 w-full rounded-full px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
           </label>
+          {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <Switch
+            label="Som ao receber mensagem"
+            checked={profile?.sound_enabled ?? true}
+            onChange={(v) => void toggle("sound_enabled", v)}
+          />
+          <Switch
+            label="Mensagens temporárias (10s após lidas)"
+            checked={profile?.ephemeral_enabled ?? false}
+            onChange={(v) => void toggle("ephemeral_enabled", v)}
+          />
+        </div>
+
+        <div className="glass-panel mt-4 rounded-3xl p-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Senha do sol (4 dígitos)</p>
+          <div className="mt-2 flex gap-2">
+            <input
+              value={pin}
+              onChange={(e) => {
+                setPinNote(null);
+                setPin(e.target.value.replace(/\D/g, "").slice(0, 4));
+              }}
+              inputMode="numeric"
+              placeholder="0000"
+              className="neu-input min-w-0 flex-1 rounded-full px-5 py-3 text-center text-sm tracking-[0.5em] outline-none"
+            />
+            <button
+              onClick={() => void savePin()}
+              className="send-pill rounded-full px-4 text-sm font-bold text-white active:scale-95"
+            >
+              Ativar
+            </button>
+          </div>
+          {profile?.sun_pin ? (
+            <button onClick={() => void clearPin()} className="mt-2 text-xs font-bold text-destructive">
+              Remover senha
+            </button>
+          ) : null}
+          {pinNote ? <p className="mt-2 text-xs font-bold text-primary">{pinNote}</p> : null}
         </div>
 
         <button
@@ -137,5 +219,33 @@ function ProfilePage() {
         </div>
       </div>
     </main>
+  );
+}
+
+function Switch({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className="glass-panel flex w-full items-center justify-between gap-3 rounded-3xl px-4 py-3 text-left"
+    >
+      <span className="text-sm font-bold">{label}</span>
+      <span
+        aria-hidden
+        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${checked ? "send-pill" : "bg-muted-foreground/25"}`}
+      >
+        <span
+          className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+          style={{ transform: `translateX(${checked ? 22 : 2}px)` }}
+        />
+      </span>
+    </button>
   );
 }
