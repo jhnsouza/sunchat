@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as UniversoRouteImport } from './routes/universo'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -34,18 +35,25 @@ const ProfileRoute = ProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UniversoRoute = UniversoRouteImport.update({
+  id: '/universo',
+  path: '/universo',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/chat': typeof ChatRoute
   '/profile': typeof ProfileRoute
+  '/universo': typeof UniversoRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/chat': typeof ChatRoute
   '/profile': typeof ProfileRoute
+  '/universo': typeof UniversoRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +61,14 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/chat': typeof ChatRoute
   '/profile': typeof ProfileRoute
+  '/universo': typeof UniversoRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/chat' | '/profile'
+  fullPaths: '/' | '/auth' | '/chat' | '/profile' | '/universo'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/chat' | '/profile'
-  id: '__root__' | '/' | '/auth' | '/chat' | '/profile'
+  to: '/' | '/auth' | '/chat' | '/profile' | '/universo'
+  id: '__root__' | '/' | '/auth' | '/chat' | '/profile' | '/universo'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,6 +76,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   ChatRoute: typeof ChatRoute
   ProfileRoute: typeof ProfileRoute
+  UniversoRoute: typeof UniversoRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -99,6 +109,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/universo': {
+      id: '/universo'
+      path: '/universo'
+      fullPath: '/universo'
+      preLoaderRoute: typeof UniversoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -107,6 +124,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   ChatRoute: ChatRoute,
   ProfileRoute: ProfileRoute,
+  UniversoRoute: UniversoRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
