@@ -8,7 +8,7 @@ export type Peer = {
   name: string;
   x: number;
   z: number;
-  message?: string | null;
+  message?: string | null | undefined;
   messageAt?: number;
 };
 
@@ -145,7 +145,7 @@ function CloudAvatar({ tint }: { tint: string }) {
   );
 }
 
-function Label({ name, message }: { name: string; message?: string | null }) {
+function Label({ name, message }: { name: string; message?: string | null | undefined }) {
   return (
     <group position={[0, 1.5, 0]}>
       <Text fontSize={0.4} color="#0f2740" anchorY="bottom" outlineWidth={0.035} outlineColor="#ffffff">
@@ -179,7 +179,7 @@ function Player({
   moveRef: React.MutableRefObject<MoveState>;
   inputRef: React.MutableRefObject<{ x: number; z: number }>;
   name: string;
-  message?: string | null;
+  message?: string | null | undefined;
   onMove: (state: MoveState) => void;
 }) {
   const body = useRef<THREE.Group>(null);
@@ -286,7 +286,7 @@ export function UniverseScene({
   moveRef: React.MutableRefObject<MoveState>;
   inputRef: React.MutableRefObject<{ x: number; z: number }>;
   name: string;
-  myMessage?: string | null;
+  myMessage?: string | null | undefined;
   peers: Peer[];
   onMove: (state: MoveState) => void;
 }) {
