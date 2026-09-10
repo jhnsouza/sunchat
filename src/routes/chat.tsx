@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, File as FileIcon, ImageIcon, ArrowUp, Plus, Timer } from "lucide-react";
+import { Camera, File as FileIcon, ImageIcon, ArrowUp, ArrowRight, Plus, Timer } from "lucide-react";
+import cloudLogo from "@/assets/cloud-logo.png.asset.json";
 import { supabase } from "@/integrations/supabase/client";
 import { Avatar } from "@/components/Avatar";
 import {
