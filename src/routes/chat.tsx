@@ -419,6 +419,30 @@ function ChatPage() {
             </button>
           </div>
 
+          <div className="px-4 pb-4">
+            <button
+              onClick={() => navigate({ to: "/universo" })}
+              className="neon-pasto flex w-full items-center gap-3 rounded-full px-3 py-3 text-left"
+            >
+              <img
+                src={cloudLogo.url}
+                alt=""
+                width={54}
+                height={54}
+                className="h-13 w-13 shrink-0 rounded-full bg-white/85 p-1"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-lg font-extrabold text-white drop-shadow">Entrar no Pasto</span>
+                <span className="block truncate text-[10px] font-extrabold uppercase tracking-[0.2em] text-white/85">
+                  Converse · Explore · Conecte
+                </span>
+              </span>
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/25 ring-1 ring-white/50">
+                <ArrowRight className="h-5 w-5 text-white" />
+              </span>
+            </button>
+          </div>
+
           {adding ? (
             <div className="glass-panel mx-4 mb-3 rounded-3xl p-3">
               <p className="px-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
