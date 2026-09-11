@@ -80,7 +80,7 @@ function Ground() {
   const geometry = useMemo(() => {
     const geo = new THREE.PlaneGeometry(WORLD * 2.6, WORLD * 2.6, 180, 180);
     geo.rotateX(-Math.PI / 2);
-    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const pos = geo.attributes["position"] as THREE.BufferAttribute;
     for (let i = 0; i < pos.count; i++) {
       pos.setY(i, terrainHeight(pos.getX(i), pos.getZ(i)));
     }
