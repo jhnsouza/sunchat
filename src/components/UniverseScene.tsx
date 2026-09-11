@@ -1,111 +1,162 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Environment, Lightformer, Text } from "@react-three/drei";
-import { Suspense, useMemo, useRef } from "react";
+import { Billboard, Text, useTexture } from "@react-three/drei";
+import { Suspense, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import grassAsset from "@/assets/grass.jpg.asset.json";
+import skyAsset from "@/assets/sky360.png.asset.json";
 
 export type Peer = {
   id: string;
   name: string;
   x: number;
   z: number;
+  avatar?: string | null | undefined;
   message?: string | null | undefined;
-  messageAt?: number;
 };
 
 export type MoveState = { x: number; z: number; angle: number };
+export type LookState = { yaw: number; pitch: number };
 
-const WORLD = 120;
-const SPEED = 7;
+const WORLD = 140;
+const SPEED = 8;
 
-/** Soft grass texture so the pasture is never a flat single color. */
-function useGrassTexture() {
+/** Rolling terrain shared by camera, avatars and grass blades. */
+export function terrainHeight(x: number, z: number) {
+  return (
+    Math.sin(x * 0.045) * 1.9 +
+    Math.cos(z * 0.038) * 2.2 +
+    Math.sin((x + z) * 0.021) * 3.1 +
+    Math.sin(x * 0.11 + z * 0.07) * 0.5
+  );
+}
+
+/** Single blade sprite drawn to canvas, used by the instanced grass tufts. */
+function useBladeTexture() {
   return useMemo(() => {
-    const size = 512;
+    const w = 64;
+    const h = 128;
     const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#6aa84f";
-    ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 5200; i++) {
-      const x = Math.random() * size;
-      const y = Math.random() * size;
-      const l = 3 + Math.random() * 7;
-      ctx.strokeStyle = `hsl(${95 + Math.random() * 25} ${45 + Math.random() * 25}% ${28 + Math.random() * 30}%)`;
-      ctx.lineWidth = 1 + Math.random();
+    ctx.clearRect(0, 0, w, h);
+    for (let i = 0; i < 4; i++) {
+      const baseX = 10 + i * 14;
+      const tipX = baseX + (Math.random() - 0.5) * 18;
+      const grad = ctx.createLinearGradient(0, h, 0, 0);
+      grad.addColorStop(0, "#2f6b23");
+      grad.addColorStop(1, "#8bd15a");
+      ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + (Math.random() - 0.5) * 3, y - l);
-      ctx.stroke();
+      ctx.moveTo(baseX - 4, h);
+      ctx.quadraticCurveTo(baseX + 2, h * 0.45, tipX, 6);
+      ctx.quadraticCurveTo(baseX + 8, h * 0.5, baseX + 5, h);
+      ctx.closePath();
+      ctx.fill();
     }
     const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(34, 34);
     tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
   }, []);
 }
 
-function Clouds() {
-  const puffs = useMemo(
-    () =>
-      Array.from({ length: 26 }, () => ({
-        x: (Math.random() - 0.5) * WORLD * 1.6,
-        y: 16 + Math.random() * 14,
-        z: (Math.random() - 0.5) * WORLD * 1.6,
-        s: 4 + Math.random() * 6,
-        drift: 0.2 + Math.random() * 0.5,
-      })),
-    [],
-  );
-  const group = useRef<THREE.Group>(null);
-  useFrame((_, delta) => {
-    const g = group.current;
-    if (!g) return;
-    const dt = Math.min(delta, 0.05);
-    g.children.forEach((child, i) => {
-      child.position.x += puffs[i]!.drift * dt;
-      if (child.position.x > WORLD) child.position.x = -WORLD;
-    });
-  });
+function Sky() {
+  const tex = useTexture(skyAsset.url);
+  useLayoutEffect(() => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.wrapS = THREE.RepeatWrapping;
+  }, [tex]);
   return (
-    <group ref={group}>
-      {puffs.map((p, i) => (
-        <group key={i} position={[p.x, p.y, p.z]} scale={p.s}>
-          <mesh>
-            <sphereGeometry args={[1, 16, 16]} />
-            <meshStandardMaterial color="#ffffff" roughness={1} />
-          </mesh>
-          <mesh position={[1.1, -0.25, 0.2]} scale={0.75}>
-            <sphereGeometry args={[1, 16, 16]} />
-            <meshStandardMaterial color="#f7fbff" roughness={1} />
-          </mesh>
-          <mesh position={[-1.05, -0.3, -0.15]} scale={0.65}>
-            <sphereGeometry args={[1, 16, 16]} />
-            <meshStandardMaterial color="#f2f8ff" roughness={1} />
-          </mesh>
-        </group>
-      ))}
-    </group>
+    <mesh scale={[-1, 1, 1]}>
+      <sphereGeometry args={[520, 64, 40]} />
+      <meshBasicMaterial map={tex} side={THREE.BackSide} toneMapped={false} depthWrite={false} />
+    </mesh>
+  );
+}
+
+function Ground() {
+  const tex = useTexture(grassAsset.url);
+  const geometry = useMemo(() => {
+    const geo = new THREE.PlaneGeometry(WORLD * 2.6, WORLD * 2.6, 180, 180);
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes["position"] as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setY(i, terrainHeight(pos.getX(i), pos.getZ(i)));
+    }
+    geo.computeVertexNormals();
+    return geo;
+  }, []);
+
+  useLayoutEffect(() => {
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(70, 70);
+    tex.anisotropy = 8;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+  }, [tex]);
+
+  return (
+    <mesh geometry={geometry} receiveShadow>
+      <meshStandardMaterial map={tex} roughness={0.95} />
+    </mesh>
+  );
+}
+
+/** Instanced 3D grass tufts that follow the terrain. */
+function GrassTufts({ count = 5000 }: { count?: number }) {
+  const blade = useBladeTexture();
+  const mesh = useRef<THREE.InstancedMesh>(null);
+
+  useLayoutEffect(() => {
+    const inst = mesh.current;
+    if (!inst) return;
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const p = new THREE.Vector3();
+    for (let i = 0; i < count; i++) {
+      const x = (Math.random() - 0.5) * 190;
+      const z = (Math.random() - 0.5) * 190;
+      const scale = 0.7 + Math.random() * 0.9;
+      p.set(x, terrainHeight(x, z) + 0.5 * scale, z);
+      q.setFromEuler(new THREE.Euler(0, Math.random() * Math.PI, 0));
+      s.set(scale, scale, scale);
+      m.compose(p, q, s);
+      inst.setMatrixAt(i, m);
+    }
+    inst.instanceMatrix.needsUpdate = true;
+  }, [count]);
+
+  return (
+    <instancedMesh ref={mesh} args={[undefined, undefined, count]} frustumCulled={false}>
+      <planeGeometry args={[1.1, 1.1]} />
+      <meshStandardMaterial
+        map={blade}
+        transparent
+        alphaTest={0.4}
+        side={THREE.DoubleSide}
+        roughness={0.9}
+      />
+    </instancedMesh>
   );
 }
 
 function Scenery() {
   const props = useMemo(
     () =>
-      Array.from({ length: 60 }, () => ({
-        x: (Math.random() - 0.5) * WORLD * 1.7,
-        z: (Math.random() - 0.5) * WORLD * 1.7,
-        s: 0.7 + Math.random() * 1.3,
-        tree: Math.random() > 0.35,
-      })),
+      Array.from({ length: 54 }, () => {
+        const x = (Math.random() - 0.5) * WORLD * 1.8;
+        const z = (Math.random() - 0.5) * WORLD * 1.8;
+        return { x, z, y: terrainHeight(x, z), s: 0.8 + Math.random() * 1.4, tree: Math.random() > 0.35 };
+      }),
     [],
   );
   return (
     <group>
       {props.map((p, i) =>
         p.tree ? (
-          <group key={i} position={[p.x, 0, p.z]} scale={p.s}>
+          <group key={i} position={[p.x, p.y, p.z]} scale={p.s}>
             <mesh position={[0, 1.4, 0]} castShadow>
               <cylinderGeometry args={[0.26, 0.36, 2.8, 8]} />
               <meshStandardMaterial color="#7a5230" roughness={0.9} />
@@ -116,7 +167,7 @@ function Scenery() {
             </mesh>
           </group>
         ) : (
-          <mesh key={i} position={[p.x, 0.35 * p.s, p.z]} scale={p.s} castShadow>
+          <mesh key={i} position={[p.x, p.y + 0.35 * p.s, p.z]} scale={p.s} castShadow>
             <dodecahedronGeometry args={[0.6, 0]} />
             <meshStandardMaterial color="#9aa0a6" roughness={0.95} />
           </mesh>
@@ -126,59 +177,119 @@ function Scenery() {
   );
 }
 
-function CloudAvatar({ tint }: { tint: string }) {
+/** Profile photo shown as a billboarded disc so it always faces the camera. */
+function PhotoBadge({ url, fallback }: { url?: string | null | undefined; fallback: string }) {
+  const texture = useMemo(() => {
+    if (!url) return null;
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin("anonymous");
+    const tex = loader.load(url);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, [url]);
+
   return (
     <group>
-      <mesh position={[0, 0, 0]} castShadow>
-        <sphereGeometry args={[0.85, 20, 20]} />
-        <meshStandardMaterial color={tint} roughness={0.55} />
+      <mesh position={[0, 0, -0.02]}>
+        <circleGeometry args={[0.98, 40]} />
+        <meshBasicMaterial color="#ffffff" toneMapped={false} />
       </mesh>
-      <mesh position={[0.75, -0.28, 0]} castShadow>
-        <sphereGeometry args={[0.58, 18, 18]} />
-        <meshStandardMaterial color="#f4d03f" roughness={0.55} />
-      </mesh>
-      <mesh position={[-0.78, -0.3, 0]} castShadow>
-        <sphereGeometry args={[0.52, 18, 18]} />
-        <meshStandardMaterial color="#63c264" roughness={0.55} />
-      </mesh>
+      {texture ? (
+        <mesh>
+          <circleGeometry args={[0.88, 40]} />
+          <meshBasicMaterial map={texture} toneMapped={false} />
+        </mesh>
+      ) : (
+        <>
+          <mesh>
+            <circleGeometry args={[0.88, 40]} />
+            <meshBasicMaterial color="#4fb0ef" toneMapped={false} />
+          </mesh>
+          <Text fontSize={0.9} color="#ffffff" anchorX="center" anchorY="middle" position={[0, 0, 0.01]}>
+            {fallback}
+          </Text>
+        </>
+      )}
     </group>
   );
 }
 
-function Label({ name, message }: { name: string; message?: string | null | undefined }) {
+/** Neon speech balloon, always readable and never rotating with the avatar. */
+function Balloon({ text }: { text: string }) {
+  const width = Math.min(7, Math.max(2.4, text.length * 0.3));
   return (
-    <group position={[0, 1.5, 0]}>
-      <Text fontSize={0.4} color="#0f2740" anchorY="bottom" outlineWidth={0.035} outlineColor="#ffffff">
+    <group position={[0, 1.9, 0]}>
+      <mesh>
+        <planeGeometry args={[width, 1.1]} />
+        <meshBasicMaterial color="#04122b" transparent opacity={0.72} toneMapped={false} />
+      </mesh>
+      <mesh position={[0, 0, -0.01]}>
+        <planeGeometry args={[width + 0.14, 1.24]} />
+        <meshBasicMaterial color="#38f0ff" toneMapped={false} />
+      </mesh>
+      <Text
+        position={[0, 0, 0.02]}
+        fontSize={0.36}
+        maxWidth={width - 0.3}
+        color="#ffffff"
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.045}
+        outlineColor="#0ea5e9"
+      >
+        {text}
+      </Text>
+    </group>
+  );
+}
+
+function AvatarTag({
+  name,
+  avatar,
+  message,
+}: {
+  name: string;
+  avatar?: string | null | undefined;
+  message?: string | null | undefined;
+}) {
+  return (
+    <Billboard position={[0, 1.7, 0]}>
+      <PhotoBadge url={avatar} fallback={(name || "?").charAt(0).toUpperCase()} />
+      <Text position={[0, -1.28, 0]} fontSize={0.36} color="#062a44" outlineWidth={0.04} outlineColor="#ffffff">
         {name}
       </Text>
-      {message ? (
-        <Text
-          position={[0, 0.75, 0]}
-          fontSize={0.42}
-          maxWidth={6}
-          color="#ffffff"
-          anchorY="bottom"
-          outlineWidth={0.05}
-          outlineColor="#1b4f8a"
-        >
-          {message}
-        </Text>
-      ) : null}
+      {message ? <Balloon text={message} /> : null}
+    </Billboard>
+  );
+}
+
+function Body({ tint }: { tint: string }) {
+  return (
+    <group>
+      <mesh castShadow>
+        <capsuleGeometry args={[0.42, 0.7, 8, 16]} />
+        <meshStandardMaterial color={tint} roughness={0.6} />
+      </mesh>
     </group>
   );
 }
 
-/** Local player: keyboard + joystick movement with a chase camera. */
 function Player({
   moveRef,
   inputRef,
+  lookRef,
+  firstPerson,
   name,
+  avatar,
   message,
   onMove,
 }: {
   moveRef: React.MutableRefObject<MoveState>;
   inputRef: React.MutableRefObject<{ x: number; z: number }>;
+  lookRef: React.MutableRefObject<LookState>;
+  firstPerson: boolean;
   name: string;
+  avatar?: string | null | undefined;
   message?: string | null | undefined;
   onMove: (state: MoveState) => void;
 }) {
@@ -213,23 +324,44 @@ function Player({
     if (k["s"] || k["arrowdown"]) iz += 1;
     const len = Math.hypot(ix, iz);
     const state = moveRef.current;
+    const { yaw, pitch } = lookRef.current;
+
     if (len > 0.05) {
       ix /= len;
       iz /= len;
-      state.x = THREE.MathUtils.clamp(state.x + ix * SPEED * dt, -WORLD, WORLD);
-      state.z = THREE.MathUtils.clamp(state.z + iz * SPEED * dt, -WORLD, WORLD);
-      state.angle = Math.atan2(ix, iz);
+      // Camera-relative movement: forward follows where the player is looking.
+      const moveX = -Math.sin(yaw) * -iz + Math.cos(yaw) * ix;
+      const moveZ = -Math.cos(yaw) * -iz - Math.sin(yaw) * ix;
+      state.x = THREE.MathUtils.clamp(state.x + moveX * SPEED * dt, -WORLD, WORLD);
+      state.z = THREE.MathUtils.clamp(state.z + moveZ * SPEED * dt, -WORLD, WORLD);
+      state.angle = Math.atan2(moveX, moveZ);
     }
 
+    const groundY = terrainHeight(state.x, state.z);
     const g = body.current;
     if (g) {
-      g.position.set(state.x, 1.1 + Math.sin(performance.now() / 420) * 0.08, state.z);
+      g.position.set(state.x, groundY + 0.95, state.z);
       g.rotation.y = THREE.MathUtils.lerp(g.rotation.y, state.angle, 1 - Math.exp(-10 * dt));
+      g.visible = !firstPerson;
     }
 
-    const target = new THREE.Vector3(state.x, 4.2, state.z + 9.5);
-    camera.position.lerp(target, 1 - Math.exp(-5 * dt));
-    camera.lookAt(state.x, 1.4, state.z);
+    if (firstPerson) {
+      camera.position.set(state.x, groundY + 1.7, state.z);
+      camera.lookAt(
+        state.x - Math.sin(yaw) * 6,
+        groundY + 1.7 + Math.tan(pitch) * 6,
+        state.z - Math.cos(yaw) * 6,
+      );
+    } else {
+      const dist = 9;
+      const target = new THREE.Vector3(
+        state.x + Math.sin(yaw) * dist,
+        groundY + 4.4 - Math.tan(pitch) * 5,
+        state.z + Math.cos(yaw) * dist,
+      );
+      camera.position.lerp(target, 1 - Math.exp(-7 * dt));
+      camera.lookAt(state.x, groundY + 1.6, state.z);
+    }
 
     const now = performance.now();
     if (now - lastSent.current > 120) {
@@ -240,8 +372,8 @@ function Player({
 
   return (
     <group ref={body}>
-      <CloudAvatar tint="#5bb8f5" />
-      <Label name={name} message={message} />
+      <Body tint="#4fb0ef" />
+      <AvatarTag name={name} avatar={avatar} message={message} />
     </group>
   );
 }
@@ -255,62 +387,63 @@ function PeerAvatar({ peer }: { peer: Peer }) {
     const t = 1 - Math.exp(-8 * dt);
     node.position.x = THREE.MathUtils.lerp(node.position.x, peer.x, t);
     node.position.z = THREE.MathUtils.lerp(node.position.z, peer.z, t);
-    node.position.y = 1.1 + Math.sin(performance.now() / 520) * 0.08;
+    node.position.y = terrainHeight(node.position.x, node.position.z) + 0.95;
   });
   return (
-    <group ref={g} position={[peer.x, 1.1, peer.z]}>
-      <CloudAvatar tint="#9fe0a6" />
-      <Label name={peer.name} message={peer.message} />
+    <group ref={g} position={[peer.x, terrainHeight(peer.x, peer.z) + 0.95, peer.z]}>
+      <Body tint="#8fe4a2" />
+      <AvatarTag name={peer.name} avatar={peer.avatar} message={peer.message} />
     </group>
-  );
-}
-
-function Ground() {
-  const grass = useGrassTexture();
-  return (
-    <mesh rotation-x={-Math.PI / 2} receiveShadow>
-      <planeGeometry args={[WORLD * 2.4, WORLD * 2.4]} />
-      <meshStandardMaterial map={grass} roughness={0.95} />
-    </mesh>
   );
 }
 
 export function UniverseScene({
   moveRef,
   inputRef,
+  lookRef,
+  firstPerson,
   name,
+  avatar,
   myMessage,
   peers,
   onMove,
 }: {
   moveRef: React.MutableRefObject<MoveState>;
   inputRef: React.MutableRefObject<{ x: number; z: number }>;
+  lookRef: React.MutableRefObject<LookState>;
+  firstPerson: boolean;
   name: string;
+  avatar?: string | null | undefined;
   myMessage?: string | null | undefined;
   peers: Peer[];
   onMove: (state: MoveState) => void;
 }) {
   return (
-    <Canvas shadows camera={{ position: [0, 5, 12], fov: 60 }} dpr={[1, 2]}>
-      <color attach="background" args={["#8ecbf5"]} />
-      <fog attach="fog" args={["#a9d8f7", 60, 190]} />
-      <hemisphereLight args={["#cfe9ff", "#5c8a4a", 0.8]} />
+    <Canvas shadows camera={{ position: [0, 6, 12], fov: 62, far: 1200 }} dpr={[1, 2]}>
+      <fog attach="fog" args={["#bcdcf5", 90, 320]} />
+      <hemisphereLight args={["#dff0ff", "#4f7d3c", 0.85]} />
       <directionalLight
-        position={[30, 40, 20]}
-        intensity={1.7}
+        position={[40, 60, 25]}
+        intensity={1.8}
         castShadow
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
       />
       <Suspense fallback={null}>
-        <Environment>
-          <Lightformer intensity={2} position={[0, 8, 0]} scale={[14, 14, 1]} />
-          <Lightformer intensity={0.9} color="#bfe4ff" position={[-8, 2, -2]} rotation-y={Math.PI / 2} scale={[24, 2, 1]} />
-        </Environment>
+        <Sky />
         <Ground />
+        <GrassTufts />
         <Scenery />
-        <Clouds />
-        <Player moveRef={moveRef} inputRef={inputRef} name={name} message={myMessage} onMove={onMove} />
+        <Player
+          moveRef={moveRef}
+          inputRef={inputRef}
+          lookRef={lookRef}
+          firstPerson={firstPerson}
+          name={name}
+          avatar={avatar}
+          message={myMessage}
+          onMove={onMove}
+        />
         {peers.map((p) => (
           <PeerAvatar key={p.id} peer={p} />
         ))}
